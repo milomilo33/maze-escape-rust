@@ -6,7 +6,7 @@ use std::hash::Hash;
 use std::io::{ self, BufRead, BufReader };
 use std::process::exit;
 use std::collections::{ HashSet, VecDeque };
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 
 #[derive(Clone, PartialEq, Debug)]
@@ -22,8 +22,6 @@ struct MazeCell {
     row_index: usize,
     col_index: usize,
     available_directions: Vec<Direction>,
-    // doors: Vec<(Direction, bool)>, // direction, unlocked bool
-    // key: bool,
     end_of_maze: bool
 }
 
@@ -37,18 +35,6 @@ impl MazeCell {
         }
     }
 }
-
-// struct Maze {
-//     table: Array2D<MazeCell>,
-//     current_position: (u32, u32),
-//     previous_positions: Vec<(u32, u32)>,
-//     cells_with_doors: Vec<(u32, u32, Direction, bool)>,
-//     cells_with_unlocked_doors: Vec<(u32, u32, Direction)>,
-//     keys_initial: Vec<(u32, u32)>,
-//     keys_left: Vec<(u32, u32)>,
-//     num_keys_to_use: u32,
-//     ends: Vec<(u32, u32)>,
-// }
 
 #[derive(Clone)]
 struct MazeState {
@@ -153,7 +139,6 @@ fn read_maze_from_file(filename: String) -> (Array2D<MazeCell>, MazeState) {
             exit(1);
         }
     }
-    // Read the file line by line, and return an iterator of the lines of the file.
 }
 
 fn get_valid_neighbours(maze_table: &Array2D<MazeCell>, maze_state: &MazeState) -> Vec<MazeState> {
@@ -389,6 +374,73 @@ fn solve_maze_bfs_parallel(maze_table: Array2D<MazeCell>, initial_maze_state: Ma
     }
 }
 
+fn solve_maze_bfs_parallel_channels(maze_table: Array2D<MazeCell>, initial_maze_state: MazeState) {
+    // cells visited while having visited[2] keys available
+    let mut visited: HashSet<(usize, usize, u32)> = HashSet::new();
+    visited.insert((initial_maze_state.current_position.0, initial_maze_state.current_position.1, initial_maze_state.num_keys_to_use));
+
+    let mut bfs_queue: VecDeque<MazeState> = VecDeque::new();
+    bfs_queue.push_back(initial_maze_state);
+
+    let (tx, rx) = mpsc::channel();
+
+    let mut maze_end_state: Option<MazeState> = None;
+
+    while !bfs_queue.is_empty() {
+        let current_maze_state = Arc::new(bfs_queue.pop_front().unwrap());
+        
+        let current_position = current_maze_state.current_position;
+        let current_maze_cell = Arc::new(maze_table.get(current_position.0, current_position.1).unwrap().clone());
+
+        // found end of maze
+        if current_maze_cell.end_of_maze {
+            match Arc::try_unwrap(current_maze_state) {
+                Ok(current_maze_state) => maze_end_state = Some(current_maze_state),
+                Err(_) => maze_end_state = None,
+            }
+            break;
+        }
+
+        let mut spawned_threads = Vec::new();
+           
+        for direction in current_maze_cell.available_directions.clone() {
+            let current_maze_state = Arc::clone(&current_maze_state);
+            let current_maze_cell = Arc::clone(&current_maze_cell);
+            let tx = tx.clone();
+            let thread = thread::spawn(move || {
+                let neighbour_state = get_new_state_if_neighbour_valid(&current_maze_state, &current_maze_cell, direction.clone());
+
+                match neighbour_state {
+                    Some(neighbour_state) => {
+                        tx.send(neighbour_state).unwrap();
+                    },
+                    None => (),
+                }
+            });
+            spawned_threads.push(thread);
+        }
+
+        for thread in spawned_threads {
+            thread.join().unwrap();
+        }
+
+        for received_neighbour_states in rx.try_iter() {
+            if !visited.contains(&(received_neighbour_states.current_position.0, received_neighbour_states.current_position.1, received_neighbour_states.num_keys_to_use)) {
+                visited.insert((received_neighbour_states.current_position.0, received_neighbour_states.current_position.1, received_neighbour_states.num_keys_to_use));
+                bfs_queue.push_back(received_neighbour_states);
+            }
+        }
+    }
+
+    match maze_end_state {
+        Some(maze_end_state) => {
+            // form & draw solution output
+            write_and_draw_solution(&maze_end_state, &maze_table, String::from("parallel"));
+        },
+        None => return
+    }
+}
+
 fn write_and_draw_solution(maze_end_state: &MazeState, maze_table: &Array2D<MazeCell>, keyword: String) {
     println!("(row, col) indexes of {} solution in order:\n", keyword);
     let mut iter = 1;
@@ -471,6 +523,8 @@ fn main() {
     let (maze_table, initial_maze_state) = read_maze_from_file(String::from("maze_def.txt"));
     let maze_table_parallel = maze_table.clone();
     let initial_maze_state_parallel = initial_maze_state.clone();
+    let maze_table_parallel_channels = maze_table.clone();
+    let initial_maze_state_parallel_channels = initial_maze_state.clone();
 
     // for locked in &initial_maze_state.cells_with_locked_doors {
     //     println!("({}, {}, {:?})", locked.0, locked.1, locked.2);
@@ -493,4 +547,12 @@ fn main() {
 
     let elapsed = now.elapsed();
     println!("Elapsed (parallel): {:.2?}", elapsed);
+
+
+    let now = Instant::now();
+
+    solve_maze_bfs_parallel_channels(maze_table_parallel_channels, initial_maze_state_parallel_channels);
+
+    let elapsed = now.elapsed();
+    println!("Elapsed (parallel channels): {:.2?}", elapsed);
 }
