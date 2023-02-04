@@ -314,8 +314,6 @@ fn get_new_state_if_neighbour_valid(maze_state: &MazeState, current_cell: &MazeC
 }
 
 fn solve_maze_bfs_parallel(maze_table: Array2D<MazeCell>, initial_maze_state: MazeState) {
-    // let maze_table_x = Arc::new(Box::new(maze_table));
-
     // cells visited while having visited[2] keys available
     let visited: Arc<Mutex<HashSet<(usize, usize, u32)>>> = Arc::new(Mutex::new(HashSet::new()));
     {
@@ -329,9 +327,6 @@ fn solve_maze_bfs_parallel(maze_table: Array2D<MazeCell>, initial_maze_state: Ma
 
     let mut maze_end_state: Option<MazeState> = None;
 
-    // let critical_section = Arc::new(Mutex::new(()));
-
-    // let maze_table = Arc::new(maze_table);
     loop {
         {
             if bfs_queue.lock().unwrap().is_empty() {
@@ -343,7 +338,6 @@ fn solve_maze_bfs_parallel(maze_table: Array2D<MazeCell>, initial_maze_state: Ma
             current_maze_state = Arc::new(bfs_queue.lock().unwrap().pop_front().unwrap());
         }
         
-        // let maze_table = Arc::new(&maze_table);
         let current_position = current_maze_state.current_position;
         let current_maze_cell = Arc::new(maze_table.get(current_position.0, current_position.1).unwrap().clone());
 
@@ -357,14 +351,12 @@ fn solve_maze_bfs_parallel(maze_table: Array2D<MazeCell>, initial_maze_state: Ma
         }
 
         let mut spawned_threads = Vec::new();
-        // let critical_section = Arc::clone(&critical_section);
            
         for direction in current_maze_cell.available_directions.clone() {
             let visited = Arc::clone(&visited);
             let bfs_queue = Arc::clone(&bfs_queue);
             let current_maze_state = Arc::clone(&current_maze_state);
             let current_maze_cell = Arc::clone(&current_maze_cell);
-            // let maze_table = Arc::clone(&maze_table);
             let thread = thread::spawn(move || {
                 let neighbour_state = get_new_state_if_neighbour_valid(&current_maze_state, &current_maze_cell, direction.clone());
 
@@ -407,8 +399,6 @@ fn write_and_draw_solution(maze_end_state: &MazeState, maze_table: &Array2D<Maze
     println!("{}. ({}, {})", iter, maze_end_state.current_position.0, maze_end_state.current_position.1);
 
     println!("\nEnd of {} solution.\n\nTable representation of solution (0 = untraversed; 1 = traversed):\n", keyword);
-    // let mut row_iter = 0;
-    // let mut col_iter = 0;
     for iterator in maze_table.rows_iter() {
         for maze_cell in iterator {
             if maze_end_state.previous_positions.contains(&(maze_cell.row_index, maze_cell.col_index)) ||
@@ -425,8 +415,6 @@ fn write_and_draw_solution(maze_end_state: &MazeState, maze_table: &Array2D<Maze
 
 fn draw_initial_maze(initial_maze_state: &MazeState, maze_table: &Array2D<MazeCell>) {
     println!("\nTable representation of initial maze:\n");
-    // let mut row_iter = 0;
-    // let mut col_iter = 0;
     for iterator in maze_table.rows_iter() {
         for maze_cell in iterator {
             let mut cell_num = 0;
